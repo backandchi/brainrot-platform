@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
+    "vercel-build": "cd apps/web && npm install && npm run build",
     "lint": "turbo run lint",
     "db:generate": "pnpm --filter @brainrot/database db:generate",
     "db:migrate": "pnpm --filter @brainrot/database db:migrate",
