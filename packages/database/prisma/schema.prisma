@@ -1,0 +1,266 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+  OPERATOR
+}
+
+enum Rarity {
+  COMMON      // Gray / Blue
+  RARE        // Green / Light Blue
+  EPIC        // Purple
+  LEGENDARY   // Gold / Tillarang
+  MYTHIC      // Red
+  SECRET      // Rainbow / OG Glow
+}
+
+enum InventoryStatus {
+  INVENTORY
+  FARM_STAKED
+  WITHDRAW_PENDING
+  WITHDRAWN
+  FUSED
+}
+
+enum TradeStatus {
+  PENDING
+  APPROVED
+  IN_PROGRESS
+  COMPLETED
+  EXPIRED
+  REJECTED
+  CANCELLED
+}
+
+enum GameType {
+  CASE_OPEN
+  CRASH_ROCKET
+  MINES
+  DICE
+  UPGRADER
+  FUSE
+  CASE_BATTLE
+}
+
+model User {
+  id              String           @id @default(uuid())
+  telegramId      BigInt           @unique
+  username        String?
+  firstName       String?
+  lastName        String?
+  avatarUrl       String?
+  robloxUsername  String?
+  role            Role             @default(USER)
+  balanceCoins    Decimal          @default(100.0) @db.Decimal(18, 2)
+  balanceStars    Int              @default(0)
+  totalDeposited  Decimal          @default(0.0) @db.Decimal(18, 2)
+  totalWithdrawn  Decimal          @default(0.0) @db.Decimal(18, 2)
+  referrerId      String?
+  referrer        User?            @relation("UserReferrals", fields: [referrerId], references: [id])
+  referrals       User[]           @relation("UserReferrals")
+  referralCode    String           @unique @default(uuid())
+  referralEarnings Decimal         @default(0.0) @db.Decimal(18, 2)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  inventory       InventoryItem[]
+  farmPlots       FarmPlot[]
+  tradeRequests   TradeRequest[]
+  gameSessions    GameSession[]
+  userQuests      UserQuest[]
+  battlesAsPlayer1 CaseBattle[]    @relation("BattlePlayer1")
+  battlesAsPlayer2 CaseBattle[]    @relation("BattlePlayer2")
+
+  @@index([telegramId])
+  @@index([robloxUsername])
+}
+
+model Item {
+  id               String          @id @default(uuid())
+  name             String
+  slug             String          @unique
+  rarity           Rarity          @default(COMMON)
+  priceCoins       Decimal         @db.Decimal(18, 2)
+  yieldPerHour     Decimal         @default(1.0) @db.Decimal(18, 2)
+  imageUrl         String
+  glowColor        String          @default("#3b82f6") // Hex or glow class (gold, red, purple, etc.)
+  isTradeable      Boolean         @default(true)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  caseItems        CaseItem[]
+  inventoryItems   InventoryItem[]
+  tradeItems       TradeItem[]
+}
+
+model Case {
+  id               String          @id @default(uuid())
+  name             String
+  slug             String          @unique
+  category         String          @default("linear") // linear, mixed, allin, thematic, streamer, deposit, rarity
+  priceCoins       Decimal         @db.Decimal(18, 2)
+  imageUrl         String
+  bannerUrl        String?
+  rtpPercentage    Decimal         @default(95.0) @db.Decimal(5, 2) // Return to Player %
+  isActive         Boolean         @default(true)
+  orderIndex       Int             @default(0)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  items            CaseItem[]
+  battleCases      BattleCase[]
+}
+
+model CaseItem {
+  id               String          @id @default(uuid())
+  caseId           String
+  itemId           String
+  weight           Int             @default(100) // Drop weight for RNG calculation
+  dropChance       Decimal         @db.Decimal(5, 2) // Calculated % displayed in UI
+
+  case             Case            @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  item             Item            @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([caseId, itemId])
+}
+
+model InventoryItem {
+  id               String          @id @default(uuid())
+  userId           String
+  itemId           String
+  status           InventoryStatus @default(INVENTORY)
+  acquiredFrom     String          @default("CASE_OPEN") // CASE_OPEN, UPGRADE, FUSE, DEPOSIT, FARM
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  item             Item            @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  farmPlot         FarmPlot?
+  tradeItem        TradeItem?
+
+  @@index([userId, status])
+}
+
+model FarmPlot {
+  id               String          @id @default(uuid())
+  userId           String
+  plotIndex        Int             // Slot index 0..15 in farm room
+  inventoryItemId  String          @unique
+  lastHarvestAt    DateTime        @default(now())
+  createdAt        DateTime        @default(now())
+
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  inventoryItem    InventoryItem   @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, plotIndex])
+}
+
+model TradeRequest {
+  id               String          @id @default(uuid())
+  userId           String
+  type             String          // "DEPOSIT" or "WITHDRAW"
+  robloxUsername   String
+  status           TradeStatus     @default(PENDING)
+  serverLink       String?         // Roblox VIP Server link provided by Admin
+  expiresAt        DateTime?       // 5-minute countdown deadline
+  cooldownUntil    DateTime?       // 1-hour anti-spam cooldown timestamp
+  adminNotes       String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items            TradeItem[]
+
+  @@index([userId, status])
+  @@index([robloxUsername])
+}
+
+model TradeItem {
+  id               String          @id @default(uuid())
+  tradeRequestId   String
+  itemId           String
+  inventoryItemId  String?         @unique
+
+  tradeRequest     TradeRequest    @relation(fields: [tradeRequestId], references: [id], onDelete: Cascade)
+  item             Item            @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  inventoryItem    InventoryItem?  @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+}
+
+model GameSession {
+  id               String          @id @default(uuid())
+  userId           String
+  gameType         GameType
+  betAmount        Decimal         @db.Decimal(18, 2)
+  winAmount        Decimal         @default(0.0) @db.Decimal(18, 2)
+  multiplier       Decimal         @default(0.0) @db.Decimal(10, 2)
+  serverSeed       String
+  clientSeed       String
+  nonce            Int             @default(0)
+  sha256Hash       String          // Provably fair verification hash
+  gameDataJson     String?         // Specific game state (mines array, crash point, dice roll)
+  createdAt        DateTime        @default(now())
+
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, gameType])
+}
+
+model CaseBattle {
+  id               String          @id @default(uuid())
+  player1Id        String
+  player2Id        String?
+  status           String          @default("WAITING") // WAITING, IN_PROGRESS, FINISHED
+  totalCost        Decimal         @db.Decimal(18, 2)
+  winnerId         String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  player1          User            @relation("BattlePlayer1", fields: [player1Id], references: [id])
+  player2          User?           @relation("BattlePlayer2", fields: [player2Id], references: [id])
+  battleCases      BattleCase[]
+}
+
+model BattleCase {
+  id               String          @id @default(uuid())
+  battleId         String
+  caseId           String
+  roundOrder       Int             @default(0)
+
+  battle           CaseBattle      @relation(fields: [battleId], references: [id], onDelete: Cascade)
+  case             Case            @relation(fields: [caseId], references: [id], onDelete: Cascade)
+}
+
+model Quest {
+  id               String          @id @default(uuid())
+  title            String
+  description      String
+  actionType       String          // SUBSCRIBE_TELEGRAM, INVITE_3_FRIENDS, OPEN_5_CASES, STAKE_FARM
+  targetCount      Int             @default(1)
+  rewardCoins      Decimal         @db.Decimal(18, 2)
+  channelIdOrLink  String?
+  isActive         Boolean         @default(true)
+
+  userQuests       UserQuest[]
+}
+
+model UserQuest {
+  id               String          @id @default(uuid())
+  userId           String
+  questId          String
+  currentProgress  Int             @default(0)
+  isCompleted      Boolean         @default(false)
+  completedAt      DateTime?
+
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  quest            Quest           @relation(fields: [questId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questId])
+}
